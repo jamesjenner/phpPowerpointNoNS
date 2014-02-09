@@ -1,0 +1,206 @@
+<?php
+
+include_once 'ParagraphProperty.php';
+
+/**
+ * Paragraph is a class for representing a paragraph as per the Office Open XML File Formats, Standard ECMA-376
+ *
+ * Please note the following:
+ * By default a paragraph uses bullets, a paragraph has no bullets only if the bullet none type is specified. 
+ * The start for auto bullets are duplicated for each paragraph until the bullet type or style is changed. This can 
+ * be misleading as the count doesn't restart on the next instance.  
+ *   
+ * @todo determine how consecutive same numbers for start at are handled.    
+ *  
+ * @todo implement fully the specification for paragraphs 
+ * @see OfficeDocument 
+ * @package phpoffice  
+ * @version 0.1    
+ * @author James Jenner
+ * @copyright Copyright (c) 2011, James Jenner
+ * @license http://opensource.org/licenses/gpl-3.0.html GNU General Public License, version 3 (GPL-3.0) 
+ * @link http://www.ecma-international.org/publications/standards/Ecma-376.htm	 	 
+ */ 
+class Paragraph {
+    // TODO: can the following attributes be private? suspect that they can be
+    
+    /** the Text object instance for the Paragraph instance @see Text */
+	public $text;
+	/** a paragraph property instance for the paragraph */
+	public $paragraphProperty;
+
+	/** defines if debug is enabled, if enabled then output will be generated to understand the generation of the paragraph */ 
+	const DEBUG = false;
+	
+	/**
+	 * constructor for the Paragraph class
+	 * 
+	 * @param node the node for the paragraph based on Office Open XML File Formats, Standard ECMA-376 
+	 */	 		
+	public function __construct($node) {
+        // apply defaults
+        $this->text = array();
+        $this->paragraphProperty = new ParagraphProperty($this);
+        // build the paragraph
+		$this->buildParagraph($node);
+	}
+
+	/**
+	 * Retreives from all components of the paragraph instance producing a html markup representation of the paragraph
+	 *
+	 * The generated html will use various tags depending on the nature of the 
+	 * paragraph. For example, if the paragraph is a list of auto numbers then 
+	 * the ordered list <ol> tag is applied, while if the paragraph is text 
+	 * then the paragraph <p> tag will be applied.
+	 * Attributes are added to the encapsulating tag to provide markup for 
+	 * indentation, alignment, etc.
+	 * 
+	 * Note that bullet information is kept in the paragraph property while text is in the paragraph. Due to html constraints
+	 * the processing for the bullets is performed here. It is possible to move bullet logic to the ParagraphProperty class, 
+	 * however this may make comprehension of how the html markup is generated difficult.
+	 * 
+	 * Also note that to properly render bullets, officeparagraph.css is required.	 	  	 	 	 	 	      	  	 
+	 *	 
+	 * @param Paragraph $prevParagraph a link to the previous paragraph, this is required for bullet point based sequences 
+	 * 	 	 
+	 * @return string the html markup for the paragraph
+	 */
+	public function getHTML($prevParagraph) {
+	    $markup = '';
+
+        // note that debuging is left in because uncertain on impact when templates are applied
+
+	    // add markup for 
+	    if($this->paragraphProperty->bulletStyle == ParagraphProperty::NO_BULLETS) {
+	      // no bullets, need to check if bullets have previously been generated, if so then close
+	      if(isset($prevParagraph) && $prevParagraph->paragraphProperty->bulletStyle == ParagraphProperty::AUTO_NUMBERED_BULLETS) {
+            // close the auto numbered bullets
+		    $markup = "</ol>";
+            if(Paragraph::DEBUG) echo "- /ol<br>";
+		  } else if (isset($prevParagraph) && $prevParagraph->paragraphProperty->bulletStyle == ParagraphProperty::BULLETS) {
+		    // close the bullets
+		    $markup = "</ul>";
+            if(Paragraph::DEBUG) echo "- /ul<br>";
+		  }
+		  
+          // add the start pargapraph tag, leave open to allow addition of properties
+		  $markup = "<p"; 
+          if(Paragraph::DEBUG) echo "- p (no &gt)<br>";
+		} else if($this->paragraphProperty->bulletStyle == ParagraphProperty::AUTO_NUMBERED_BULLETS) {
+          // close bullets if prev was bullets
+		  if(isset($prevParagraph) && ParagraphProperty::BULLETS) {
+            // close prevoius bullets 
+            $markup = "</ul>";
+		  } else if($prevParagraph->paragraphProperty->bulletStyle == ParagraphProperty::AUTO_NUMBERED_BULLETS && 
+		            $prevParagraph->paragraphProperty->bulletStartsAt != $this->paragraphProperty->bulletStartsAt) {
+            // if the previous auto bullet started at a different number, then close them
+            $markup = '</ol>';
+          }
+          
+		  // start the auto numbered bullets if it's new and set the style of the bullets
+	      if(!isset($prevParagraph) || 
+		     $prevParagraph->paragraphProperty->bulletStyle != ParagraphProperty::AUTO_NUMBERED_BULLETS ||
+		     ($prevParagraph->paragraphProperty->bulletStyle == ParagraphProperty::AUTO_NUMBERED_BULLETS && 
+			  $prevParagraph->paragraphProperty->bulletStartsAt != $this->paragraphProperty->bulletStartsAt)) { 
+
+            // open the orderd list start tag            
+            $markup .= '<ol';
+            // add the start at if it is specified, default is 1, so no need if not set
+			if($this->paragraphProperty->bulletStartsAt > 0) {
+			  $markup .= ' start=' . $this->paragraphProperty->bulletStartsAt;
+	        }
+            // add the class, associated style and close the orderd list start tag            
+			$markup .= ' class="'. $this->paragraphProperty->getBulletTypeClassDef() . '">';
+            
+            if(Paragraph::DEBUG) echo "- ol ". $this->paragraphProperty->bulletStartsAt ."<br>";
+          }
+          
+          // add the start list item tag, leave open to allow addition of properties
+		  $markup .= "<li";
+          if(Paragraph::DEBUG) echo "-- li (no &gt)<br>";
+		} else if($this->paragraphProperty->bulletStyle == ParagraphProperty::BULLETS) {
+          // close auto numbered bullets if prev was auto numbered bullets
+		  if(isset($prevParagraph) && ParagraphProperty::AUTO_NUMBERED_BULLETS) {
+            // close prevoius bullets
+            $markup = "</ol>";
+		  }
+		  
+		  // start the bullets if not previously started
+	      if(!isset($prevParagraph) || $prevParagraph->paragraphProperty->bulletStyle != ParagraphProperty::BULLETS) {
+            $markup = "<ul>";
+            if(Paragraph::DEBUG) echo "- ul<br>";
+          }
+          // add the start list item tag, leave open to allow addition of properties
+		  $markup .= "<li";
+          if(Paragraph::DEBUG) echo "-- li (no &gt)<br>";
+		}
+
+		// apply alignment
+        switch($this->paragraphProperty->alignment) {
+          default:
+          case ParagraphProperty::LEFT:
+            $markup .= " align=left";
+            if(Paragraph::DEBUG) echo "--- align left<br>";
+            break;
+          case ParagraphProperty::CENTER:
+            $markup .= " align=center";
+            if(Paragraph::DEBUG) echo "--- align center<br>";
+            break;
+		  case ParagraphProperty::RIGHT:
+            $markup .= " align=right";
+            if(Paragraph::DEBUG) echo "--- align right<br>";
+            break;
+          case ParagraphProperty::JUSTIFY:
+            $markup .= " align=justify";
+            if(Paragraph::DEBUG) echo "--- align justify<br>";
+            break;
+		}
+
+		// complete the opening tag
+        $markup .= ">";
+        if(Paragraph::DEBUG) echo "- &gt<br>";
+
+		// add the text        
+		foreach($this->text as $textInstance) {
+          $markup .= $textInstance->getHTML();
+        }
+
+		// close the pargapraph tag if no bullets
+	    if($this->paragraphProperty->bulletStyle == ParagraphProperty::NO_BULLETS) {
+	      // add the close paragraph tag
+		  $markup .= "</p>";
+          if(Paragraph::DEBUG) echo "/p<br>";
+        } else if($this->paragraphProperty->bulletStyle == ParagraphProperty::AUTO_NUMBERED_BULLETS || 
+		          $this->paragraphProperty->bulletStyle == ParagraphProperty::BULLETS) {
+          // add the close list item tag
+		  $markup .= "</li>";
+          if(Paragraph::DEBUG) echo "-- /li<br>";
+        }
+
+        // note: presumption is that there will be an empty final paragraph set 
+		// to NO_BULLETS to close of any lists, as such it is not handled here
+
+		return $markup;
+	}	 	
+	 
+	/**
+	 * Process the specified node to build the current instance of the paragraph
+	 * 
+	 * @param node the node to be processed that represents a paragraph as per the standard
+	 * @see Paragraph	 	 
+	 */ 
+	private function buildParagraph($paragraphNode) {
+	    // process the nodes for the paragraph
+		foreach($paragraphNode->children("a", TRUE) as $childNode) {
+			if($childNode->getName() === "r") {
+			    // we have a run node, generate the text
+	            $this->text[] = new Text($childNode);
+			} else if($childNode->getName() === "pPr") {
+			    
+			    $this->paragraphProperty = new ParagraphProperty($this, $childNode);
+			}
+		}
+	}
+}
+
+?>
